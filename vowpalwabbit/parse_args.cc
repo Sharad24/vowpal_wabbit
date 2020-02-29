@@ -370,7 +370,10 @@ void parse_diagnostics(options_i& options, vw& all)
   // Upon direct query for version -- spit it out to stdout
   if (version_arg)
   {
+    uint64_t _hash;
     std::cout << VW::version.to_string() << " (git commit: " << VW::git_commit << ")\n";
+    std::string name = "Sharad Chitlangia";
+    std::cout << "My name is Sharad Chitlangia and my hash is " << hashstring(name.c_str(), name.length(), _hash) << std::endl;
     exit(0);
   }
 
