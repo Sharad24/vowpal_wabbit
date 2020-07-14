@@ -136,15 +136,15 @@ void reset_source(vw& all, size_t numbits)
     all.p->output->close_file();
 
     // This deletes the file from disk.
-    remove(all.p->output->finalname.begin());
+    remove(all.p->finalname.c_str());
 
     // Rename the cache file to the final name.
-    if (0 != rename(all.p->output->currentname.begin(), all.p->output->finalname.begin()))
-      THROW("WARN: reset_source(vw& all, size_t numbits) cannot rename: " << all.p->output->currentname << " to "
-                                                                          << all.p->output->finalname);
+    if (0 != rename(all.p->currentname.c_str(), all.p->finalname.c_str()))
+      THROW("WARN: reset_source(vw& all, size_t numbits) cannot rename: " << all.p->currentname << " to "
+                                                                          << all.p->finalname);
     input->close_files();
     // Now open the written cache as the new input file.
-    input->add_file(VW::io::open_file_reader(all.p->output->finalname.cbegin()));
+    input->add_file(VW::io::open_file_reader(all.p->finalname));    all.p->reader = read_cached_features;
     all.p->reader = read_cached_features;
   }
 
@@ -165,7 +165,7 @@ void reset_source(vw& all, size_t numbits)
       socklen_t size = sizeof(client_address);
       int f = (int)accept(all.p->bound_sock, (sockaddr*)&client_address, &size);
       if (f < 0)
-        THROW("accept: " << strerror(errno));
+        THROW("accept: " << VW::strerror_to_string(errno));
 
       // Disable Nagle delay algorithm due to daemon mode's interactive workload
       int one = 1;
@@ -177,20 +177,22 @@ void reset_source(vw& all, size_t numbits)
       all.final_prediction_sink.push_back(socket->get_writer());
       all.p->input->add_file(socket->get_reader());
 
-      if (isbinary(*(all.p->input)))
+      if (all.p->input->isbinary())
       {
         all.p->reader = read_cached_features;
-IGNORE_DEPRECATED_USAGE_START
+VW_WARNING_STATE_PUSH
+VW_WARNING_DISABLE_DEPRECATED_USAGE
         all.print = binary_print_result;
-IGNORE_DEPRECATED_USAGE_END
+VW_WARNING_STATE_POP
         all.print_by_ref = binary_print_result_by_ref;
       }
       else
       {
         all.p->reader = read_features_string;
-IGNORE_DEPRECATED_USAGE_START
+VW_WARNING_STATE_PUSH
+VW_WARNING_DISABLE_DEPRECATED_USAGE
         all.print = print_result;
-IGNORE_DEPRECATED_USAGE_END
+VW_WARNING_STATE_POP
         all.print_by_ref = print_result_by_ref;
       }
     }
@@ -217,16 +219,14 @@ void make_write_cache(vw& all, std::string& newname, bool quiet)
     return;
   }
 
-  std::string temp = newname + std::string(".writing");
-  push_many(output->currentname, temp.c_str(), temp.length() + 1);
-
+  all.p->currentname = newname + std::string(".writing");
   try
   {
-    output->add_file(VW::io::open_file_writer(temp));
+    output->add_file(VW::io::open_file_writer(all.p->currentname));
   }
   catch (const std::exception&)
   {
-    all.trace_message << "can't create cache file !" << temp << endl;
+    all.trace_message << "can't create cache file !" << all.p->currentname << endl;
     return;
   }
 
@@ -238,7 +238,7 @@ void make_write_cache(vw& all, std::string& newname, bool quiet)
   output->bin_write_fixed(reinterpret_cast<const char*>(&all.num_bits), sizeof(all.num_bits));
   output->flush();
 
-  push_many(output->finalname, newname.c_str(), newname.length() + 1);
+  all.p->finalname = newname;
   all.p->write_cache = true;
   if (!quiet)
     all.trace_message << "creating cache_file = " << newname << endl;
@@ -293,7 +293,6 @@ void parse_cache(vw& all, std::vector<std::string> cache_files, bool kill_cache,
   {
     if (!quiet)
       all.trace_message << "using no cache" << endl;
-    all.p->output->space.delete_v();
   }
 }
 
@@ -322,19 +321,19 @@ void enable_sources(vw& all, bool quiet, size_t passes, input_options& input_opt
     if (all.p->bound_sock < 0)
     {
       std::stringstream msg;
-      msg << "socket: " << strerror(errno);
+      msg << "socket: " << VW::strerror_to_string(errno);
       all.trace_message << msg.str() << endl;
       THROW(msg.str().c_str());
     }
 
     int on = 1;
     if (setsockopt(all.p->bound_sock, SOL_SOCKET, SO_REUSEADDR, (char*)&on, sizeof(on)) < 0)
-      all.trace_message << "setsockopt SO_REUSEADDR: " << strerror(errno) << endl;
+      all.trace_message << "setsockopt SO_REUSEADDR: " << VW::strerror_to_string(errno) << endl;
 
     // Enable TCP Keep Alive to prevent socket leaks
     int enableTKA = 1;
     if (setsockopt(all.p->bound_sock, SOL_SOCKET, SO_KEEPALIVE, (char*)&enableTKA, sizeof(enableTKA)) < 0)
-      all.trace_message << "setsockopt SO_KEEPALIVE: " << strerror(errno) << endl;
+      all.trace_message << "setsockopt SO_KEEPALIVE: " << VW::strerror_to_string(errno) << endl;
 
     sockaddr_in address;
     address.sin_family = AF_INET;
@@ -358,7 +357,7 @@ void enable_sources(vw& all, bool quiet, size_t passes, input_options& input_opt
       socklen_t address_size = sizeof(address);
       if (getsockname(all.p->bound_sock, (sockaddr*)&address, &address_size) < 0)
       {
-        all.trace_message << "getsockname: " << strerror(errno) << endl;
+        all.trace_message << "getsockname: " << VW::strerror_to_string(errno) << endl;
       }
       std::ofstream port_file;
       port_file.open(input_options.port_file.c_str());
@@ -483,9 +482,10 @@ void enable_sources(vw& all, bool quiet, size_t passes, input_options& input_opt
     int one = 1;
     setsockopt(f_a, SOL_TCP, TCP_NODELAY, reinterpret_cast<char*>(&one), sizeof(one));
 
-IGNORE_DEPRECATED_USAGE_START
+VW_WARNING_STATE_PUSH
+VW_WARNING_DISABLE_DEPRECATED_USAGE
     all.print = print_result;
-IGNORE_DEPRECATED_USAGE_END
+VW_WARNING_STATE_POP
     all.print_by_ref = print_result_by_ref;
 
     auto socket = VW::io::wrap_socket_descriptor(f_a);
@@ -500,12 +500,13 @@ IGNORE_DEPRECATED_USAGE_END
       all.p->reader = read_features_string;
     else
     {
-      if (isbinary(*(all.p->input)))
+      if (all.p->input->isbinary())
       {
         all.p->reader = read_cached_features;
-IGNORE_DEPRECATED_USAGE_START
+VW_WARNING_STATE_PUSH
+VW_WARNING_DISABLE_DEPRECATED_USAGE
         all.print = binary_print_result;
-IGNORE_DEPRECATED_USAGE_END
+VW_WARNING_STATE_POP
         all.print_by_ref = binary_print_result_by_ref;
       }
       else
@@ -603,7 +604,6 @@ IGNORE_DEPRECATED_USAGE_END
   if (passes > 1 && !all.p->resettable)
     THROW("need a cache file for multiple passes : try using --cache_file");
 
-  all.p->input->count = all.p->input->num_files();
   if (!quiet && !all.daemon)
     all.trace_message << "num sources = " << all.p->input->num_files() << endl;
 }
@@ -706,6 +706,10 @@ example& get_unused_example(vw* all)
   parser* p = all->p;
   auto ex = p->example_pool.get_object();
   p->begin_parsed_examples++;
+VW_WARNING_STATE_PUSH
+VW_WARNING_DISABLE_DEPRECATED_USAGE
+  ex->in_use = true;
+VW_WARNING_STATE_POP
   return *ex;
 }
 
@@ -886,12 +890,9 @@ void releaseFeatureSpace(primitive_feature_space* features, size_t len)
 
 void parse_example_label(vw& all, example& ec, std::string label)
 {
-  v_array<VW::string_view> words = v_init<VW::string_view>();
-
+  std::vector<VW::string_view> words;
   tokenize(' ', label, words);
   all.p->lp.parse_label(all.p, all.p->_shared_data, &ec.l, words);
-  words.clear();
-  words.delete_v();
 }
 
 void empty_example(vw& /*all*/, example& ec)
@@ -913,6 +914,10 @@ void clean_example(vw& all, example& ec, bool rewind)
   }
 
   empty_example(all, ec);
+VW_WARNING_STATE_PUSH
+VW_WARNING_DISABLE_DEPRECATED_USAGE
+  ec.in_use = false;
+VW_WARNING_STATE_POP
   all.p->example_pool.return_object(&ec);
 }
 
@@ -993,18 +998,6 @@ size_t get_feature_number(example* ec) { return ec->num_features; }
 float get_confidence(example* ec) { return ec->confidence; }
 }  // namespace VW
 
-example* example_initializer::operator()(example* ex)
-{
-  memset(&ex->l, 0, sizeof(polylabel));
-  ex->passthrough = nullptr;
-  ex->tag = v_init<char>();
-  ex->indices = v_init<namespace_index>();
-IGNORE_DEPRECATED_USAGE_START
-  ex->in_use = true;
-IGNORE_DEPRECATED_USAGE_END
-  memset(ex->feature_space.data(), 0, ex->feature_space.size() * sizeof(ex->feature_space[0]));
-  return ex;
-}
 
 void adjust_used_index(vw&)
 { /* no longer used */
