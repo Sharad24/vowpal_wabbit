@@ -13,7 +13,7 @@
 // TODO: Make unit test dig out and verify features.
 BOOST_AUTO_TEST_CASE(parse_json_simple)
 {
-  auto vw = VW::initialize("--json --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw = VW::initialize("--json --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
 
   std::string json_text = R"(
     {
@@ -63,7 +63,7 @@ BOOST_AUTO_TEST_CASE(parse_json_cb)
       ]
     })";
 
-  auto vw = VW::initialize("--cb_adf --json --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw = VW::initialize("--cb_adf --json --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   auto examples = parse_json(*vw, json_text);
   BOOST_CHECK_EQUAL(examples.size(), 4);
 
@@ -79,6 +79,79 @@ BOOST_AUTO_TEST_CASE(parse_json_cb)
   BOOST_CHECK_CLOSE(examples[1]->l.cb.costs[0].probability, 0.5, FLOAT_TOL);
   BOOST_CHECK_CLOSE(examples[1]->l.cb.costs[0].cost, 1.0, FLOAT_TOL);
   BOOST_CHECK_EQUAL(examples[1]->l.cb.costs[0].action, 1);
+  VW::finish_example(*vw, examples);
+  VW::finish(*vw);
+}
+
+BOOST_AUTO_TEST_CASE(parse_json_cats)
+{
+  std::vector<std::string> features = {"18-25", "4", "C", "0", "1", "2", "15", "M"};
+  std::string json_text = R"(
+{
+  "_label_ca":
+  {
+    "cost": 0.657567,
+    "pdf_value": 6.20426e-05,
+    "action": 185.121
+  },
+  "18-25":1,
+  "4":1,
+  "C":1,
+  "0":1,
+  "1":1,
+  "2":1,
+  "15":1,
+  "M":1
+}
+)";
+
+  auto vw =
+      VW::initialize("--json --chain_hash --cats 4 --min_value=185 --max_value=23959 --bandwidth 1 --no_stdin --quiet",
+          nullptr, false, nullptr, nullptr);
+  auto examples = parse_json(*vw, json_text);
+
+  BOOST_CHECK_EQUAL(examples.size(), 1);
+
+  BOOST_CHECK_EQUAL(examples[0]->l.cb_cont.costs.size(), 1);
+  BOOST_CHECK_CLOSE(examples[0]->l.cb_cont.costs[0].pdf_value, 6.20426e-05, FLOAT_TOL);
+  BOOST_CHECK_CLOSE(examples[0]->l.cb_cont.costs[0].cost, 0.657567, FLOAT_TOL);
+  BOOST_CHECK_CLOSE(examples[0]->l.cb_cont.costs[0].action, 185.121, FLOAT_TOL);
+
+  auto& space_names = examples[0]->feature_space[' '].space_names;
+  BOOST_CHECK_EQUAL(features.size(), space_names.size());
+  for (size_t i = 0; i < space_names.size(); i++) { BOOST_CHECK_EQUAL(space_names[i]->second, features[i]); }
+
+  VW::finish_example(*vw, examples);
+  VW::finish(*vw);
+}
+
+BOOST_AUTO_TEST_CASE(parse_json_cats_no_label)
+{
+  std::vector<std::string> features = {"18-25", "4", "C", "0", "1", "2", "15", "M"};
+  std::string json_text = R"(
+{
+  "18-25":1,
+  "4":1,
+  "C":1,
+  "0":1,
+  "1":1,
+  "2":1,
+  "15":1,
+  "M":1
+}
+)";
+  auto vw = VW::initialize(
+      "--json --chain_hash -t --cats 4 --min_value=185 --max_value=23959 --bandwidth 1 --no_stdin --quiet", nullptr,
+      false, nullptr, nullptr);
+  auto examples = parse_json(*vw, json_text);
+
+  BOOST_CHECK_EQUAL(examples.size(), 1);
+  BOOST_CHECK_EQUAL(examples[0]->l.cb_cont.costs.size(), 0);
+
+  auto& space_names = examples[0]->feature_space[' '].space_names;
+  BOOST_CHECK_EQUAL(features.size(), space_names.size());
+  for (size_t i = 0; i < space_names.size(); i++) { BOOST_CHECK_EQUAL(space_names[i]->second, features[i]); }
+
   VW::finish_example(*vw, examples);
   VW::finish(*vw);
 }
@@ -135,7 +208,8 @@ BOOST_AUTO_TEST_CASE(parse_json_ccb)
       ]
     })";
 
-  auto vw = VW::initialize("--ccb_explore_adf --json --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw =
+      VW::initialize("--ccb_explore_adf --json --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
 
   auto examples = parse_json(*vw, json_text);
 
@@ -203,7 +277,8 @@ BOOST_AUTO_TEST_CASE(parse_json_cb_as_ccb)
       ]
     })";
 
-  auto vw = VW::initialize("--ccb_explore_adf --json --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw =
+      VW::initialize("--ccb_explore_adf --json --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
 
   auto examples = parse_json(*vw, json_text);
 
@@ -279,7 +354,8 @@ BOOST_AUTO_TEST_CASE(parse_json_slates_dom_parser)
 )";
 
   // Assert parsed values against what they should be
-  auto slates_vw = VW::initialize("--slates --dsjson --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto slates_vw =
+      VW::initialize("--slates --dsjson --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   auto examples = parse_json(*slates_vw, json_text);
 
   BOOST_CHECK_EQUAL(examples.size(), 8);

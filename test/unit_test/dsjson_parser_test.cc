@@ -22,7 +22,6 @@ multi_ex parse_dsjson(vw& all, std::string line, DecisionServiceInteraction* int
     interaction = &local_interaction;
   }
 
-
   VW::read_line_decision_service_json<true>(all, examples, (char*)line.c_str(), line.size(), false,
       (VW::example_factory_t)&VW::get_unused_example, (void*)&all, interaction);
 
@@ -33,6 +32,83 @@ multi_ex parse_dsjson(vw& all, std::string line, DecisionServiceInteraction* int
   }
   examples.delete_v();
   return result;
+}
+
+BOOST_AUTO_TEST_CASE(parse_dsjson_underscore_p)
+{
+  const std::string json_text = R"(
+{
+  "_p": [0.4, 0.6]
+}
+  )";
+  auto vw = VW::initialize("--dsjson --chain_hash --cb_adf --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  DecisionServiceInteraction interaction;
+
+  auto examples = parse_dsjson(*vw, json_text, &interaction);
+  VW::finish_example(*vw, examples);
+  VW::finish(*vw);
+
+  constexpr float EXPECTED_PDF[2] = {0.4f, 0.6f};
+  const size_t num_probabilities = interaction.probabilities.size();
+  BOOST_CHECK_EQUAL(num_probabilities, 2);
+  for (size_t i = 0; i < num_probabilities; ++i)
+  {
+    // Check that probabilities are as expected.
+    BOOST_CHECK_EQUAL(interaction.probabilities[i], EXPECTED_PDF[i]);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(parse_dsjson_p)
+{
+  const std::string json_text = R"(
+{
+  "p": [0.4, 0.6]
+}
+  )";
+  auto vw = VW::initialize("--dsjson --chain_hash --cb_adf --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  DecisionServiceInteraction interaction;
+
+  auto examples = parse_dsjson(*vw, json_text, &interaction);
+  VW::finish_example(*vw, examples);
+  VW::finish(*vw);
+
+  constexpr float EXPECTED_PDF[2] = {0.4f, 0.6f};
+  const size_t num_probabilities = interaction.probabilities.size();
+  BOOST_CHECK_EQUAL(num_probabilities, 2);
+  for (size_t i = 0; i < num_probabilities; ++i)
+  {
+    // Check that probabilities are as expected.
+    BOOST_CHECK_EQUAL(interaction.probabilities[i], EXPECTED_PDF[i]);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(parse_dsjson_p_duplicates)
+{
+  const std::string json_text = R"(
+{
+  "c": {
+    "_p": [0.4, 0.6]
+  },
+  "p": [0.4, 0.3, 0.3],
+  "_p": [0.5, 0.5]
+}
+  )";
+  auto vw = VW::initialize("--dsjson --chain_hash --cb_adf --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  DecisionServiceInteraction interaction;
+
+  auto examples = parse_dsjson(*vw, json_text, &interaction);
+  VW::finish_example(*vw, examples);
+  VW::finish(*vw);
+
+  // Use the latest "p" or "_p" field provided. The "_p" is ignored when it's inside "c".
+  constexpr float EXPECTED_PDF[2] = {0.5f, 0.5f};
+  const size_t num_probabilities = interaction.probabilities.size();
+  BOOST_CHECK_EQUAL(num_probabilities, 2);
+  for (size_t i = 0; i < num_probabilities; ++i)
+  {
+    // Check that probabilities are as expected.
+    BOOST_CHECK_EQUAL(interaction.probabilities[i], EXPECTED_PDF[i]);
+  }
 }
 
 // TODO: Make unit test dig out and verify features.
@@ -99,7 +175,7 @@ BOOST_AUTO_TEST_CASE(parse_dsjson_cb)
   }
 }
 )";
-  auto vw = VW::initialize("--dsjson --cb_adf --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw = VW::initialize("--dsjson --chain_hash --cb_adf --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   auto examples = parse_dsjson(*vw, json_text);
 
   BOOST_CHECK_EQUAL(examples.size(), 4);
@@ -117,6 +193,92 @@ BOOST_AUTO_TEST_CASE(parse_dsjson_cb)
   BOOST_CHECK_CLOSE(examples[2]->l.cb.costs[0].probability, 0.8166667, FLOAT_TOL);
   BOOST_CHECK_CLOSE(examples[2]->l.cb.costs[0].cost, -1.0, FLOAT_TOL);
   BOOST_CHECK_EQUAL(examples[2]->l.cb.costs[0].action, 2);
+  VW::finish_example(*vw, examples);
+  VW::finish(*vw);
+}
+
+BOOST_AUTO_TEST_CASE(parse_dsjson_cats)
+{
+  std::vector<std::string> features = {"18-25", "4", "C", "0", "1", "2", "15", "M"};
+  std::string json_text = R"(
+{
+  "_label_ca":
+  {
+    "cost": 0.657567,
+    "pdf_value": 6.20426e-05,
+    "action": 185.121
+  },
+  "Version": "1",
+  "EventId": "event_id",
+  "c": {
+    "18-25":1,
+    "4":1,
+    "C":1,
+    "0":1,
+    "1":1,
+    "2":1,
+    "15":1,
+    "M":1
+  },
+  "VWState": {
+    "m": "N/A"
+  }
+}
+)";
+  auto vw = VW::initialize(
+      "--dsjson --chain_hash --cats 4 --min_value=185 --max_value=23959 --bandwidth 1 --no_stdin --quiet", nullptr,
+      false, nullptr, nullptr);
+  auto examples = parse_dsjson(*vw, json_text);
+
+  BOOST_CHECK_EQUAL(examples.size(), 1);
+
+  BOOST_CHECK_EQUAL(examples[0]->l.cb_cont.costs.size(), 1);
+  BOOST_CHECK_CLOSE(examples[0]->l.cb_cont.costs[0].pdf_value, 6.20426e-05, FLOAT_TOL);
+  BOOST_CHECK_CLOSE(examples[0]->l.cb_cont.costs[0].cost, 0.657567, FLOAT_TOL);
+  BOOST_CHECK_CLOSE(examples[0]->l.cb_cont.costs[0].action, 185.121, FLOAT_TOL);
+
+  auto& space_names = examples[0]->feature_space[' '].space_names;
+  BOOST_CHECK_EQUAL(features.size(), space_names.size());
+  for (size_t i = 0; i < space_names.size(); i++) { BOOST_CHECK_EQUAL(space_names[i]->second, features[i]); }
+
+  VW::finish_example(*vw, examples);
+  VW::finish(*vw);
+}
+
+BOOST_AUTO_TEST_CASE(parse_dsjson_cats_no_label)
+{
+  std::vector<std::string> features = {"18-25", "4", "C", "0", "1", "2", "15", "M"};
+  std::string json_text = R"(
+{
+  "Version": "1",
+  "EventId": "event_id",
+  "c": {
+    "18-25":1,
+    "4":1,
+    "C":1,
+    "0":1,
+    "1":1,
+    "2":1,
+    "15":1,
+    "M":1
+  },
+  "VWState": {
+    "m": "N/A"
+  }
+}
+)";
+  auto vw = VW::initialize(
+      "--dsjson --chain_hash -t --cats 4 --min_value=185 --max_value=23959 --bandwidth 1 --no_stdin --quiet", nullptr,
+      false, nullptr, nullptr);
+  auto examples = parse_dsjson(*vw, json_text);
+
+  BOOST_CHECK_EQUAL(examples.size(), 1);
+  BOOST_CHECK_EQUAL(examples[0]->l.cb_cont.costs.size(), 0);
+
+  auto& space_names = examples[0]->feature_space[' '].space_names;
+  BOOST_CHECK_EQUAL(features.size(), space_names.size());
+  for (size_t i = 0; i < space_names.size(); i++) { BOOST_CHECK_EQUAL(space_names[i]->second, features[i]); }
+
   VW::finish_example(*vw, examples);
   VW::finish(*vw);
 }
@@ -173,7 +335,8 @@ BOOST_AUTO_TEST_CASE(parse_dsjson_ccb)
 }
 )";
 
-  auto vw = VW::initialize("--ccb_explore_adf --dsjson --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw =
+      VW::initialize("--ccb_explore_adf --dsjson --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   auto examples = parse_dsjson(*vw, json_text);
 
   BOOST_CHECK_EQUAL(examples.size(), 5);
@@ -267,7 +430,8 @@ BOOST_AUTO_TEST_CASE(parse_dsjson_cb_as_ccb)
   }
 }
 )";
-  auto vw = VW::initialize("--ccb_explore_adf --dsjson --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw =
+      VW::initialize("--ccb_explore_adf --dsjson --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   auto examples = parse_dsjson(*vw, json_text);
 
   BOOST_CHECK_EQUAL(examples.size(), 5);
@@ -332,7 +496,7 @@ BOOST_AUTO_TEST_CASE(parse_dsjson_cb_with_nan)
 }
 )";
 
-  auto vw = VW::initialize("--dsjson --cb_adf --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw = VW::initialize("--dsjson --chain_hash --cb_adf --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   auto examples = parse_dsjson(*vw, json_text);
 
   BOOST_CHECK_EQUAL(examples.size(), 4);
@@ -424,7 +588,7 @@ BOOST_AUTO_TEST_CASE(parse_dsjson_slates)
     }
 })";
 
-  auto vw = VW::initialize("--slates --dsjson --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto vw = VW::initialize("--slates --dsjson --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   DecisionServiceInteraction ds_interaction;
   auto examples = parse_dsjson(*vw, json_text, &ds_interaction);
 
@@ -499,7 +663,8 @@ BOOST_AUTO_TEST_CASE(parse_dsjson_slates_dom_parser)
 )";
 
   // Assert parsed values against what they should be
-  auto slates_vw = VW::initialize("--slates --dsjson --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto slates_vw =
+      VW::initialize("--slates --dsjson --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   auto slates_examples = parse_dsjson(*slates_vw, json_text);
 
   BOOST_CHECK_EQUAL(slates_examples.size(), 1);
@@ -513,7 +678,8 @@ BOOST_AUTO_TEST_CASE(parse_dsjson_slates_dom_parser)
   BOOST_CHECK_EQUAL(slates_ex.feature_space['3'].indicies.size(), 0);
 
   // Compare the DOM parser to parsing the same features with the CCB SAX parser
-  auto ccb_vw = VW::initialize("--ccb_explore_adf --dsjson --no_stdin --quiet", nullptr, false, nullptr, nullptr);
+  auto ccb_vw =
+      VW::initialize("--ccb_explore_adf --dsjson --chain_hash --no_stdin --quiet", nullptr, false, nullptr, nullptr);
   auto ccb_examples = parse_dsjson(*ccb_vw, json_text);
   BOOST_CHECK_EQUAL(ccb_examples.size(), 1);
   const auto& ccb_ex = *ccb_examples[0];

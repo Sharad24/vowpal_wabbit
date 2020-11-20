@@ -25,7 +25,7 @@ namespace cover
 {
 struct cb_explore_adf_cover
 {
- private:
+private:
   size_t _cover_size;
   float _psi;
   bool _nounif;
@@ -41,7 +41,7 @@ struct cb_explore_adf_cover
   v_array<COST_SENSITIVE::label> _prepped_cs_labels;
   v_array<CB::label> _cb_labels;
 
- public:
+public:
   cb_explore_adf_cover(size_t cover_size, float psi, bool nounif, bool first_only,
       VW::LEARNER::multi_learner* cs_ldf_learner, VW::LEARNER::single_learner* scorer, size_t cb_type);
   ~cb_explore_adf_cover();
@@ -50,7 +50,7 @@ struct cb_explore_adf_cover
   void predict(VW::LEARNER::multi_learner& base, multi_ex& examples) { predict_or_learn_impl<false>(base, examples); }
   void learn(VW::LEARNER::multi_learner& base, multi_ex& examples) { predict_or_learn_impl<true>(base, examples); }
 
- private:
+private:
   template <bool is_learn>
   void predict_or_learn_impl(VW::LEARNER::multi_learner& base, multi_ex& examples);
 };
@@ -129,18 +129,18 @@ void cb_explore_adf_cover::predict_or_learn_impl(VW::LEARNER::multi_learner& bas
       GEN_CS::call_cs_ldf<false>(
           *(_cs_ldf_learner), examples, _cb_labels, _cs_labels, _prepped_cs_labels, examples[0]->ft_offset, i + 1);
 
-    for (uint32_t i = 0; i < num_actions; i++) _scores[i] += preds[i].score;
+    for (uint32_t j = 0; j < num_actions; j++) _scores[j] += preds[j].score;
     if (!_first_only)
     {
       size_t tied_actions = fill_tied(preds);
       const float add_prob = additive_probability / tied_actions;
-      for (size_t i = 0; i < tied_actions; ++i)
+      for (size_t j = 0; j < tied_actions; ++j)
       {
-        if (_action_probs[preds[i].action].score < min_prob)
-          norm += (std::max)(0.f, add_prob - (min_prob - _action_probs[preds[i].action].score));
+        if (_action_probs[preds[j].action].score < min_prob)
+          norm += (std::max)(0.f, add_prob - (min_prob - _action_probs[preds[j].action].score));
         else
           norm += add_prob;
-        _action_probs[preds[i].action].score += add_prob;
+        _action_probs[preds[j].action].score += add_prob;
       }
     }
     else
@@ -160,8 +160,7 @@ void cb_explore_adf_cover::predict_or_learn_impl(VW::LEARNER::multi_learner& bas
   sort_action_probs(_action_probs, _scores);
   for (size_t i = 0; i < num_actions; i++) preds[i] = _action_probs[i];
 
-  if (is_learn)
-    ++_counter;
+  if (is_learn) ++_counter;
 }
 
 cb_explore_adf_cover::~cb_explore_adf_cover()
@@ -190,18 +189,17 @@ VW::LEARNER::base_learner* setup(config::options_i& options, vw& all)
   new_options
       .add(make_option("cb_explore_adf", cb_explore_adf_option)
                .keep()
+               .necessary()
                .help("Online explore-exploit for a contextual bandit problem with multiline action dependent features"))
-      .add(make_option("cover", cover_size).keep().help("Online cover based exploration"))
+      .add(make_option("cover", cover_size).keep().necessary().help("Online cover based exploration"))
       .add(make_option("psi", psi).keep().default_value(1.0f).help("disagreement parameter for cover"))
       .add(make_option("nounif", nounif).keep().help("do not explore uniformly on zero-probability actions in cover"))
       .add(make_option("first_only", first_only).keep().help("Only explore the first action in a tie-breaking event"))
       .add(make_option("cb_type", type_string)
                .keep()
                .help("contextual bandit method to use in {ips,dr,mtr}. Default: mtr"));
-  options.add_and_parse(new_options);
 
-  if (!cb_explore_adf_option || !options.was_supplied("cover"))
-    return nullptr;
+  if (!options.add_parse_and_check_necessary(new_options)) return nullptr;
 
   // Ensure serialization of cb_type in all cases.
   if (!options.was_supplied("cb_type"))
@@ -211,10 +209,7 @@ VW::LEARNER::base_learner* setup(config::options_i& options, vw& all)
   }
 
   // Ensure serialization of cb_adf in all cases.
-  if (!options.was_supplied("cb_adf"))
-  {
-    options.insert("cb_adf", "");
-  }
+  if (!options.was_supplied("cb_adf")) { options.insert("cb_adf", ""); }
 
   all.delete_prediction = ACTION_SCORE::delete_action_scores;
 
@@ -241,7 +236,7 @@ VW::LEARNER::base_learner* setup(config::options_i& options, vw& all)
   size_t problem_multiplier = cover_size + 1;
 
   VW::LEARNER::multi_learner* base = VW::LEARNER::as_multiline(setup_base(options, all));
-  all.p->lp = CB::cb_label;
+  all.example_parser->lbl_parser = CB::cb_label;
   all.label_type = label_type_t::cb;
 
   using explore_type = cb_explore_adf_base<cb_explore_adf_cover>;

@@ -9,107 +9,13 @@
 #include "parse_primitives.h"
 #include "vw.h"
 #include "vw_exception.h"
+#include "cb_label_parser.h"
 #include "vw_string_view.h"
 
 using namespace VW::LEARNER;
 
 namespace CB
 {
-char* bufread_label(CB::label* ld, char* c, io_buf& cache)
-{
-  size_t num = *(size_t*)c;
-  ld->costs.clear();
-  c += sizeof(size_t);
-  size_t total = sizeof(cb_class) * num + sizeof(ld->weight);
-  if (cache.buf_read(c, total) < total)
-  {
-    std::cout << "error in demarshal of cost data" << std::endl;
-    return c;
-  }
-  for (size_t i = 0; i < num; i++)
-  {
-    cb_class temp = *(cb_class*)c;
-    c += sizeof(cb_class);
-    ld->costs.push_back(temp);
-  }
-  memcpy(&ld->weight, c, sizeof(ld->weight));
-  c += sizeof(ld->weight);
-  return c;
-}
-
-size_t read_cached_label(shared_data*, void* v, io_buf& cache)
-{
-  CB::label* ld = (CB::label*)v;
-  ld->costs.clear();
-  char* c;
-  size_t total = sizeof(size_t);
-  if (cache.buf_read(c, total) < total)
-    return 0;
-  bufread_label(ld, c, cache);
-
-  return total;
-}
-
-float weight(void* v)
-{
-  CB::label* ld = (CB::label*)v;
-  return ld->weight;
-}
-
-char* bufcache_label(CB::label* ld, char* c)
-{
-  *(size_t*)c = ld->costs.size();
-  c += sizeof(size_t);
-  for (auto const& cost : ld->costs)
-  {
-    *(cb_class*)c = cost;
-    c += sizeof(cb_class);
-  }
-  memcpy(c, &ld->weight, sizeof(ld->weight));
-  c += sizeof(ld->weight);
-  return c;
-}
-
-void cache_label(void* v, io_buf& cache)
-{
-  char* c;
-  CB::label* ld = (CB::label*)v;
-  cache.buf_write(c, sizeof(size_t) + sizeof(cb_class) * ld->costs.size() + sizeof(ld->weight));
-  bufcache_label(ld, c);
-}
-
-void default_label(void* v)
-{
-  CB::label* ld = (CB::label*)v;
-  ld->costs.clear();
-  ld->weight = 1;
-}
-
-bool test_label(void* v)
-{
-  CB::label* ld = (CB::label*)v;
-  if (ld->costs.empty())
-    return true;
-  for (auto const& cost : ld->costs)
-    if (FLT_MAX != cost.cost && cost.probability > 0.)
-      return false;
-  return true;
-}
-
-void delete_label(void* v)
-{
-  CB::label* ld = (CB::label*)v;
-  ld->costs.delete_v();
-}
-
-void copy_label(void* dst, void* src)
-{
-  CB::label* ldD = (CB::label*)dst;
-  CB::label* ldS = (CB::label*)src;
-  copy_array(ldD->costs, ldS->costs);
-  ldD->weight = ldS->weight;
-}
-
 void parse_label(parser* p, shared_data*, void* v, std::vector<VW::string_view>& words)
 {
   CB::label* ld = (CB::label*)v;
@@ -121,24 +27,18 @@ void parse_label(parser* p, shared_data*, void* v, std::vector<VW::string_view>&
     cb_class f;
     tokenize(':', word, p->parse_name);
 
-    if (p->parse_name.empty() || p->parse_name.size() > 3)
-    {
-      THROW("malformed cost specification: " << word);
-    }
+    if (p->parse_name.empty() || p->parse_name.size() > 3) { THROW("malformed cost specification: " << word); }
 
     f.partial_prediction = 0.;
     f.action = (uint32_t)hashstring(p->parse_name[0].begin(), p->parse_name[0].length(), 0);
     f.cost = FLT_MAX;
 
-    if (p->parse_name.size() > 1)
-      f.cost = float_of_string(p->parse_name[1]);
+    if (p->parse_name.size() > 1) f.cost = float_of_string(p->parse_name[1]);
 
-    if (std::isnan(f.cost))
-      THROW("error NaN cost (" << p->parse_name[1] << " for action: " << p->parse_name[0]);
+    if (std::isnan(f.cost)) THROW("error NaN cost (" << p->parse_name[1] << " for action: " << p->parse_name[0]);
 
     f.probability = .0;
-    if (p->parse_name.size() > 2)
-      f.probability = float_of_string(p->parse_name[2]);
+    if (p->parse_name.size() > 2) f.probability = float_of_string(p->parse_name[2]);
 
     if (std::isnan(f.probability))
       THROW("error NaN probability (" << p->parse_name[2] << " for action: " << p->parse_name[0]);
@@ -155,10 +55,7 @@ void parse_label(parser* p, shared_data*, void* v, std::vector<VW::string_view>&
     }
     if (p->parse_name[0] == "shared")
     {
-      if (p->parse_name.size() == 1)
-      {
-        f.probability = -1.f;
-      }
+      if (p->parse_name.size() == 1) { f.probability = -1.f; }
       else
         std::cerr << "shared feature vectors should not have costs" << std::endl;
     }
@@ -167,16 +64,16 @@ void parse_label(parser* p, shared_data*, void* v, std::vector<VW::string_view>&
   }
 }
 
+float weight(void*) { return 1.; }
+
 label_parser cb_label = {default_label, parse_label, cache_label, read_cached_label, delete_label, weight, copy_label,
-    test_label, sizeof(label)};
+    is_test_label, sizeof(label)};
 
 bool ec_is_example_header(example const& ec)  // example headers just have "shared"
 {
   const auto& costs = ec.l.cb.costs;
-  if (costs.size() != 1)
-    return false;
-  if (costs[0].probability == -1.f)
-    return true;
+  if (costs.size() != 1) return false;
+  if (costs[0].probability == -1.f) return true;
   return false;
 }
 
@@ -192,8 +89,7 @@ void print_update(vw& all, bool is_test, example& ec, multi_ex* ec_seq, bool act
       num_features = 0;
       // TODO: code duplication csoaa.cc LabelDict::ec_is_example_header
       for (size_t i = 0; i < (*ec_seq).size(); i++)
-        if (!CB::ec_is_example_header(*(*ec_seq)[i]))
-          num_features += (*ec_seq)[i]->num_features;
+        if (!CB::ec_is_example_header(*(*ec_seq)[i])) num_features += (*ec_seq)[i]->num_features;
     }
     std::string label_buf;
     if (is_test)
@@ -232,8 +128,7 @@ size_t read_cached_label(shared_data* sd, void* v, io_buf& cache)
   CB_EVAL::label* ld = (CB_EVAL::label*)v;
   char* c;
   size_t total = sizeof(uint32_t);
-  if (cache.buf_read(c, total) < total)
-    return 0;
+  if (cache.buf_read(c, total) < total) return 0;
   ld->action = *(uint32_t*)c;
 
   return total + CB::read_cached_label(sd, &(ld->event), cache);
@@ -259,7 +154,7 @@ void default_label(void* v)
 bool test_label(void* v)
 {
   CB_EVAL::label* ld = (CB_EVAL::label*)v;
-  return CB::test_label(&ld->event);
+  return CB::is_test_label(&ld->event);
 }
 
 void delete_label(void* v)
@@ -280,8 +175,7 @@ void parse_label(parser* p, shared_data* sd, void* v, std::vector<VW::string_vie
 {
   CB_EVAL::label* ld = (CB_EVAL::label*)v;
 
-  if (words.size() < 2)
-    THROW("Evaluation can not happen without an action and an exploration");
+  if (words.size() < 2) THROW("Evaluation can not happen without an action and an exploration");
 
   ld->action = (uint32_t)hashstring(words[0].begin(), words[0].length(), 0);
 
